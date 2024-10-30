@@ -1,6 +1,6 @@
 import random
 import torch.optim.lbfgs
-from Model import FNN
+from fnn import FNN
 from Dataset import *
 from utility import  *
 import os, time
