@@ -8,6 +8,7 @@ import torchvision
 from typing import Union
 from cmalight import CMA_L
 from cma import CMA
+import torch.nn as nn
 
 
 
@@ -136,3 +137,61 @@ def extract_history(history_file):
         val_accuracy[0] = val_accuracy[0][-5:]
         val_accuracy = [float(c.strip('[ ]')) for c in val_accuracy]
     return train_loss, val_accuracy
+
+
+def set_architecture(arch:str, input_dim:int, seed: int):
+    torch.manual_seed(seed)
+    if arch=='S':
+        return nn.Sequential(nn.Linear(input_dim,50),nn.Sigmoid(),nn.Linear(50,1))
+    elif arch=='M':
+        return nn.Sequential(nn.Linear(input_dim,20),nn.Sigmoid(),nn.Linear(20,20),
+                             nn.Sigmoid(), nn.Linear(20,20), nn.Sigmoid(), nn.Linear(20,1))
+    elif arch=='L':
+        return nn.Sequential(nn.Linear(input_dim,50),nn.Sigmoid(),nn.Linear(50,50),
+                             nn.Sigmoid(),nn.Linear(50,50),nn.Sigmoid(),nn.Linear(50,50),
+                             nn.Sigmoid(),nn.Linear(50,50), nn.Sigmoid(), nn.Linear(50,1))
+    elif arch == 'XL':
+        return nn.Sequential(nn.Linear(input_dim, 50), nn.Sigmoid(), nn.Linear(50, 50),
+                             nn.Sigmoid(), nn.Linear(50, 50), nn.Sigmoid(), nn.Linear(50, 50),
+                             nn.Sigmoid(), nn.Linear(50, 50), nn.Sigmoid(),
+                             nn.Linear(50, 50), nn.Sigmoid(), nn.Linear(50, 50), nn.Sigmoid(),
+                             nn.Linear(50, 50), nn.Sigmoid(), nn.Linear(50, 50), nn.Sigmoid(),
+                             nn.Linear(50, 50), nn.Sigmoid(), nn.Linear(50, 1))
+    elif arch == 'XXL':
+        return nn.Sequential(nn.Linear(input_dim, 50), nn.Sigmoid(), nn.Linear(50, 300),
+                             nn.Sigmoid(), nn.Linear(300, 300), nn.Sigmoid(), nn.Linear(300, 300),
+                             nn.Sigmoid(), nn.Linear(300, 300),nn.Sigmoid(), nn.Linear(300, 300),
+                             nn.Sigmoid(), nn.Linear(300, 300),nn.Sigmoid(), nn.Linear(300, 300),
+                             nn.Sigmoid(), nn.Linear(300, 300),nn.Sigmoid(), nn.Linear(300, 300),
+                             nn.Sigmoid(), nn.Linear(300, 300),nn.Sigmoid(), nn.Linear(300, 300),
+                             nn.Sigmoid(), nn.Linear(300, 50),nn.Linear(50, 1))
+    elif arch == 'XXXL':
+        return nn.Sequential(nn.Linear(input_dim, 50), nn.Sigmoid(), nn.Linear(50, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 50),nn.Linear(50, 1))
+
+    elif arch == '4XL':
+        return nn.Sequential(nn.Linear(input_dim, 50), nn.Sigmoid(), nn.Linear(50, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 50),nn.Linear(50, 1))
+
+    else:
+        raise SystemError('Set an architecture in {S,M,L,XL,XXL,XXXL,4XL} and try again')

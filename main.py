@@ -2,7 +2,7 @@ import random
 import torch.optim.lbfgs
 from fnn import FNN
 from Dataset import *
-from utility import  *
+from utils import  *
 import os, time
 from warnings import filterwarnings
 filterwarnings('ignore')

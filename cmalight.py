@@ -1,30 +1,32 @@
-import copy
-import torchvision
 import torch
-
-def get_w(model):
-    return torch.cat([p.data.view(-1) for p in model.parameters()])
+import torchvision
 
 
-def set_w(model, w):
-    index = 0
-    for param in model.parameters():
-        param_size = torch.numel(param)
-        param.data = w[index:index+param_size].view(param.size()).to(param.device)
-        index += param_size
+def get_w(model: torch.nn.Module) -> torch.Tensor:
+    """Flatten model parameters into a single vector."""
+    return torch.cat([p.detach().reshape(-1) for p in model.parameters()])
+
+
+def set_w(model: torch.nn.Module, w: torch.Tensor) -> None:
+    """Load parameters from a flat vector into the model."""
+    idx = 0
+    with torch.no_grad():
+        for p in model.parameters():
+            numel = p.numel()
+            p.copy_(w[idx:idx + numel].view_as(p))
+            idx += numel
 
 
 class CMA_L(torch.optim.Optimizer):
 
-    def __init__(self, params, alpha=0.05, zeta=0.05, eps=1e-3,theta=0.5,
-                 delta=0.9,gamma=1e-6,tau=1e-2,verbose=False,max_it_EDFL=100,
+    def __init__(self, params, alpha=0.05, zeta=0.05, eps=1e-3, theta=0.5,
+                 delta=0.9, gamma=1e-6, tau=1e-2, verbose=False, max_it_EDFL=100,
                  verbose_EDFL=False):
 
-
-        defaults = dict(alpha=alpha, zeta=zeta, eps=eps,theta=theta,
-                    delta=delta,gamma=gamma,verbose=verbose,maximize=False,
-                    tau=tau,max_it_EDFL=max_it_EDFL,verbose_EDFL=verbose_EDFL)
-
+        defaults = dict(alpha=alpha, zeta=zeta, eps=eps, theta=theta,
+                        delta=delta, gamma=gamma, verbose=verbose,
+                        maximize=False, tau=tau, max_it_EDFL=max_it_EDFL,
+                        verbose_EDFL=verbose_EDFL)
         super().__init__(params, defaults)
 
     def __setstate__(self, state):
@@ -33,32 +35,24 @@ class CMA_L(torch.optim.Optimizer):
             group.setdefault('verbose', False)
             group.setdefault('maximize', False)
 
+    # setters for scalars
+    def set_zeta(self, zeta: float): self.param_groups[0]['zeta'] = zeta
+    def set_fw0(self, fw0: float): self.fw0 = fw0
+    def set_f_tilde(self, f_tilde: float): self.f_tilde = f_tilde
+    def set_phi(self, phi: float): self.phi = phi
 
-    def set_zeta(self,zeta):
-        for group in self.param_groups:
-            group['zeta'] = zeta
-
-    def set_fw0(self,fw0: float):
-        self.fw0 = fw0
-
-    def set_f_tilde(self,f_tilde: float):
-        self.f_tilde = f_tilde
-
-    def set_phi(self,phi: float):
-        self.phi = phi
-
-
-    def step(self, closure=None,*args,**kwargs):
+    def step(self, closure=None, *args, **kwargs):
+        """One optimization step."""
         loss = None
-        if closure is not None:
-            with torch.no_grad():
-                loss = closure(*args,**kwargs)  #This should be used only when computing the loss on the whole data set
-        else:
-            with torch.no_grad():
-                for j,group in enumerate(self.param_groups):
+        with torch.no_grad():
+            if closure is not None:
+                loss = closure(*args, **kwargs)
+            else:
+                for group in self.param_groups:
+                    zeta = group['zeta']
                     for p in group['params']:
-                        p.add_(p.grad, alpha=-group['zeta'])
-
+                        if p.grad is not None:
+                            p.add_(p.grad, alpha=-zeta)
         return loss
 
     def EDFL(self,
@@ -72,49 +66,43 @@ class CMA_L(torch.optim.Optimizer):
              criterion: torch.nn):
 
         zeta = self.param_groups[0]['zeta']
-        gamma = self.defaults.get('gamma')
-        delta = self.defaults.get('delta')
-        verbose = self.defaults.get('verbose_EDFL')
-        alpha = zeta
-        nfev = 0
-        sample_model = copy.deepcopy(mod)
-        real_loss = closure(dl_train,sample_model,criterion,device)
-        if verbose: print(f'Starting EDFL  with zeta= {zeta}   alpha= {alpha}    f_tilde = {f_tilde}    real_loss_before = {real_loss}')
+        gamma, delta = self.defaults['gamma'], self.defaults['delta']
+        alpha, nfev = zeta, 0
+        verbose = self.defaults['verbose_EDFL']
+
+
+        sample_model = type(mod)()
+        sample_model.load_state_dict(mod.state_dict())
+
+        real_loss = closure(dl_train, sample_model, criterion, device)
         nfev += 1
-        if f_tilde > max(real_loss - gamma * alpha * torch.linalg.norm(d_k) ** 2,self.fw0):
+        if verbose:
+            print(f'Starting EDFL with zeta={zeta}, alpha={alpha}, f_tilde={f_tilde}, real_loss_before={real_loss}')
+
+        if f_tilde > max(real_loss - gamma * alpha * torch.norm(d_k) ** 2, self.fw0):
             if verbose: print('fail: ALPHA = 0')
-            alpha = 0
-            return alpha, nfev, f_tilde
+            return 0, nfev, f_tilde
+
+        # helper to set params quickly
+        def apply_w(model, w_vec):
+            set_w(model, w_vec)
 
         w_prova = w_before + d_k * (alpha / delta)
-        with torch.no_grad():
-            idx = 0
-            for param in sample_model.parameters():
-                param.copy_(w_prova[idx:idx + param.numel()].reshape(param.shape))
-                idx += param.numel()
-
-        cur_loss = closure(dl_train,sample_model,criterion,device)
-        print(f'cur loss = {cur_loss}')
+        apply_w(sample_model, w_prova)
+        cur_loss = closure(dl_train, sample_model, criterion, device)
         nfev += 1
 
-        idx = 0
-        f_j = f_tilde
-        while cur_loss <= min(f_j,real_loss - gamma * alpha * torch.linalg.norm(d_k) ** 2) and idx <= self.defaults.get('max_it_EDFL'):
-            if verbose: print(f'idx = {idx}   cur_loss = {cur_loss}')
-            f_j = cur_loss
-            alpha = alpha / delta
+        idx, f_j = 0, f_tilde
+        while cur_loss <= min(f_j, real_loss - gamma * alpha * torch.norm(d_k) ** 2) \
+                and idx <= self.defaults['max_it_EDFL']:
+            if verbose: print(f'idx={idx} cur_loss={cur_loss}')
+            f_j, alpha = cur_loss, alpha / delta
             w_prova = w_before + d_k * (alpha / delta)
-            with torch.no_grad():
-                idxx = 0
-                for param in sample_model.parameters():
-                    param.copy_(w_prova[idxx:idxx + param.numel()].reshape(param.shape))
-                    idxx += param.numel()
-            cur_loss = closure(dl_train,sample_model,criterion,device)
-            nfev += 1
-            idx += 1
+            apply_w(sample_model, w_prova)
+            cur_loss = closure(dl_train, sample_model, criterion, device)
+            nfev, idx = nfev + 1, idx + 1
 
         return alpha, nfev, f_j
-
 
     def control_step(self,
                      model: torchvision.models,
@@ -127,80 +115,66 @@ class CMA_L(torch.optim.Optimizer):
                      epoch: int):
 
         zeta = self.param_groups[0]['zeta']
-        gamma = self.defaults.get('gamma')
-        theta = self.defaults.get('theta')
-        tau = self.defaults.get('tau')
+        gamma, theta, tau = self.defaults['gamma'], self.defaults['theta'], self.defaults['tau']
         verbose = self.param_groups[0]['verbose']
-        f_tilde = self.f_tilde
-        fw0 = self.fw0
-        phi = self.phi
-        w_after = get_w(model)
-        d = (w_after - w_before) / zeta  # Descent direction d_tilde
 
-        if f_tilde < min(fw0,phi-gamma*zeta):  # This is the best case, Exit at step 7
+        f_tilde, fw0, phi = self.f_tilde, self.fw0, self.phi
+        w_after = get_w(model)
+        d = (w_after - w_before) / zeta  # Descent direction
+
+        if f_tilde < min(fw0, phi - gamma * zeta):  # best case
             f_after = f_tilde
             history['accepted'].append(epoch)
             history['Exit'].append('7')
             if verbose: print('ok inner cycle')
 
         else:
-            # Go back to the previous value and check... Maybe we can still do something. Step 8
-            set_w(model,w_before)
-
+            set_w(model, w_before)  # rollback
             if verbose: print('back to w_k')
 
-            if torch.linalg.norm(d) <= tau * zeta:  # Step 9, we check ||d||
-                if verbose: print('||d|| suff piccola  -->  Step size reduced')
-                self.set_zeta(zeta * theta)  # Reduce step size, Step 10
+            if torch.norm(d) <= tau * zeta:  # small step
+                if verbose: print('||d|| small --> Step size reduced')
+                self.set_zeta(zeta * theta)
                 if f_tilde <= fw0:
-                    alpha = zeta
-                    new_w = w_before + alpha * d
-                    set_w(model,new_w)
-                    f_after = f_tilde  #Exit 10a, the tentative point is accepted  after an
-                    # additional control on ||d|| but the step-size is reduced
+                    alpha, f_after = zeta, f_tilde
+                    set_w(model, w_before + alpha * d)
                     history['Exit'].append('10a')
                 else:
-                    alpha = 0  # Exit 9b. We are no more in the level set, we cannot accept w_tilde
-                    f_after = phi
+                    alpha, f_after = 0, phi
                     history['Exit'].append('9b')
 
-            else:  # Step 12, d_tilde not too small, we perform EDFL
+            else:  # try EDFL
                 if verbose: print('Executing EDFL')
-                #real_loss = closure(dl_train,model_after_IC,criterion,device)
-                #print(f'Real Loss calcolata con model_after_IC =  {real_loss}')
-                alpha, nf_EDFL, f_after_LS = self.EDFL(model,dl_train,w_before,f_tilde,
-                                                       d,closure,device,criterion)
+                alpha, nf_EDFL, f_after_LS = self.EDFL(model, dl_train, w_before,
+                                                       f_tilde, d, closure,
+                                                       device, criterion)
                 history['nfev'] += nf_EDFL
-                if alpha * torch.linalg.norm(d) ** 2 <= tau * zeta:  # Step 14
-                    self.set_zeta(zeta*theta)  # Reduce the step size
+                if alpha * torch.norm(d) ** 2 <= tau * zeta:  # reduce step
+                    self.set_zeta(zeta * theta)
                     if alpha > 0:
-                        if verbose: print('LS accepted')  # Step 15a executed
+                        if verbose: print('LS accepted')
                         f_after = f_after_LS
                         history['Exit'].append('15a')
-                    elif alpha == 0 and f_tilde <= fw0:
-                        if verbose: print('Step reduced but w_tilde accepted')  # Step 15b
-                        alpha = zeta
-                        f_after = f_tilde
+                    elif f_tilde <= fw0:
+                        if verbose: print('Step reduced but w_tilde accepted')
+                        alpha, f_after = zeta, f_tilde
                         history['Exit'].append('15b')
                     else:
-                        if verbose: print('Total fail')  # Step 15c
-                        alpha = 0
-                        f_after = phi
+                        if verbose: print('Total fail')
+                        alpha, f_after = 0, phi
                         history['Exit'].append('15c')
-                else:  # Perform step 16, the LS is a total success, we accept alpha and do not reduce zeta
+                else:  # total success
                     f_after = f_after_LS
-                    self.set_zeta(alpha) #tentativo di modifica del 09/04, metto zeta pari all'ultimo alpha per il quale funziona il EDFL
+                    self.set_zeta(alpha)
                     history['Exit'].append('16')
 
-            # We set w_k+1 = w + alpha*d
-            if verbose: print(f' Final alpha = {alpha}   Current step-size zeta =  {zeta}')
-            if alpha > 0:  # If alpha is not zero, set the variables to the new value
-                new_w = w_before + alpha * d
-                set_w(model,new_w)
-                #print('Loss con new_w alla fine = ',closure(dl_train,model,criterion,device))
+            if verbose: print(f'Final alpha={alpha}, Current step-size zeta={zeta}')
+            if alpha > 0:  # update model
+                set_w(model, w_before + alpha * d)
 
-        if verbose: print(f'phi_before: {phi:3e} f_tilde: {f_tilde:3e} f_after: {f_after:3e}  Exit Step: {history["Exit"][-1]}')
+        if verbose:
+            print(f'phi_before={phi:.3e} f_tilde={f_tilde:.3e} f_after={f_after:.3e} Exit={history["Exit"][-1]}')
+            print(f'Step-size: {self.param_groups[0]["zeta"]:.3e}')
+
         history['step_size'].append(self.param_groups[0]['zeta'])
-        if verbose: print(f'Step-size: {self.param_groups[0]["zeta"]:3e}')
         return model, history, f_after, history['Exit'][-1]
-    

@@ -1,3 +1,6 @@
+import torch.nn as nn
+import torch
+
 class FNN(nn.Module):
 
     def __init__(self,layers):

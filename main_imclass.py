@@ -1,173 +1,231 @@
-import os
 import time
+from warnings import filterwarnings
+
+import torch
+import torchvision
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 from utils import closure, count_parameters, set_optimizer, accuracy
 from cmalight import get_w
 from network import get_pretrained_net
-import torch
-import torchvision
-from torch.utils.data import Subset
-from warnings import filterwarnings
-from tqdm import tqdm
-from cma import CMA
 
 filterwarnings('ignore')
 
 
-def train_model(sm_root: str,
-                opt: str,
-                ep: int,
-                ds: str,
-                net_name: str,
-                n_class: int,
-                history_ID: str,
-                seed: int,
-                dts_train,
-                dts_test,
-                modelpth = None,
-                savemodel = False) -> dict:
+def train_model(
+    sm_root: str,
+    opt: str,
+    ep: int,
+    ds: str,
+    net_name: str,
+    n_class: int,
+    history_ID: str,
+    seed: int,
+    dts_train,
+    dts_test,
+    modelpth=None,
+    savemodel: bool = False,
+) -> dict:
     print('\n ------- Begin training process ------- \n')
 
     # Hardware
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    torch.cuda.empty_cache()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True  # fixed-size CIFAR inputs -> faster
+        torch.cuda.empty_cache()
 
     # Model
-    model = get_pretrained_net(net_name, num_classes=n_class,pretrained=True,seed=seed).to(device)
+    model = get_pretrained_net(net_name, num_classes=n_class, pretrained=True, seed=seed).to(device)
     if modelpth is not None:
-        model = torch.load(modelpth,map_location=torch.device('cpu'))
-    print('\n The model has: {} trainable parameters'.format(count_parameters(model)))
-    # Loss
+        model = torch.load(modelpth, map_location=device).to(device)
+
+    print(f'\n The model has: {count_parameters(model)} trainable parameters')
+
+    # Loss + Optimizer
     criterion = torch.nn.CrossEntropyLoss()
-    # Optimizer
     optimizer = set_optimizer(opt, model)
-    # Initial Setup
-    min_acc = 0
+
+    # Initial Setup / Baselines (no gradients needed)
     t1 = time.time()
-    fw0 = closure(dts_train, model, criterion, device)
+    with torch.inference_mode():
+        fw0 = closure(dts_train, model, criterion, device)
     t2 = time.time()
-    time_compute_fw0 = t2 - t1  # To be added to the elapsed time in case we are using CMA Light (information used)
-    initial_val_loss = closure(dts_test, model, criterion, device)
-    train_accuracy = accuracy(dts_train, model, device)
-    val_acc = accuracy(dts_test, model, device)
+    time_compute_fw0 = t2 - t1  # added to elapsed time only for CMAL
+    with torch.inference_mode():
+        initial_val_loss = closure(dts_test, model, criterion, device)
+        train_accuracy = accuracy(dts_train, model, device)
+        val_acc = accuracy(dts_test, model, device)
+
     f_tilde = fw0
 
     if opt == 'cmal':
         optimizer.set_f_tilde(f_tilde)
         optimizer.set_phi(f_tilde)
         optimizer.set_fw0(fw0)
-    if opt == 'cma':
+    elif opt == 'cma':
         optimizer.set_fw0(fw0)
         optimizer.set_reference(fw0)
 
-
-    history = {'train_loss': [fw0], 'val_loss': [initial_val_loss], 'train_acc': [train_accuracy],
-               'val_accuracy': [val_acc], 'step_size': [],
-               'time_4_epoch': [0.0], 'nfev': 1, 'accepted': [], 'Exit': [], 'comments': [],
-               'elapsed_time': [0.0], 'f_tilde': []}
+    history = {
+        'train_loss': [fw0],
+        'val_loss': [initial_val_loss],
+        'train_acc': [train_accuracy],
+        'val_accuracy': [val_acc],
+        'step_size': [],
+        'time_4_epoch': [0.0],  # cumulative time excluding validation
+        'nfev': 1,
+        'accepted': [],
+        'Exit': [],
+        'comments': [],
+        'elapsed_time': [0.0],  # cumulative time including validation
+        'f_tilde': [],
+    }
 
     # Train
     for epoch in range(ep):
         start_time = time.time()
         model.train()
-        f_tilde = 0
-        if opt == 'cmal' or opt == 'cma':
+        f_tilde = 0.0
+
+        if opt in ('cmal', 'cma'):
             w_before = get_w(model)
-        with tqdm(dts_train, unit="step", position=0, leave=True) as tepoch:
-            for batch in tepoch:
-                tepoch.set_description(f"Epoch {epoch + 1}/{ep} - Training")
-                x, y = batch[0].to(device), batch[1].to(device)
-                optimizer.zero_grad()
+
+        # Training loop
+        with tqdm(dts_train, unit='step', position=0, leave=True) as tepoch:
+            tepoch.set_description(f"Epoch {epoch + 1}/{ep} - Training")
+            for x, y in tepoch:
+                x = x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
+
+                optimizer.zero_grad(set_to_none=True)
                 y_pred = model(x)
                 loss = criterion(y_pred, y)
+
+                # Original scaling preserved
                 f_tilde += loss.item() * (len(x) / 1024)
+
                 loss.backward()
                 optimizer.step()
-                tepoch.set_postfix(f_tilde=f_tilde)
+
+                tepoch.set_postfix(f_tilde=f"{f_tilde:.4f}")
 
         history['f_tilde'].append(f_tilde)
 
-        # CMAL support functions
+        # Post-epoch control steps (unchanged logic)
         if opt == 'cmal':
             optimizer.set_f_tilde(f_tilde)
-            model, history, f_after, exit = optimizer.control_step(model, w_before, closure, dts_train, device,
-                                                                   criterion, history, epoch)
+            model, history, f_after, exit_flag = optimizer.control_step(
+                model, w_before, closure, dts_train, device, criterion, history, epoch
+            )
             optimizer.set_phi(min(f_tilde, f_after, optimizer.phi))
-        else:
-            if opt == 'cma':
-                model, history, f_before, f_after, exit_type = optimizer.control_step(model, w_before, closure,
-                                                                                      dts_train, device, criterion,
-                                                                                      history, epoch)
-                optimizer.set_reference(f_before=f_after)
-
-            else:
-                pass
+        elif opt == 'cma':
+            model, history, f_before, f_after, exit_type = optimizer.control_step(
+                model, w_before, closure, dts_train, device, criterion, history, epoch
+            )
+            optimizer.set_reference(f_before=f_after)
 
         elapsed_time_noVAL = time.time() - start_time
 
-        # Validation
+        # Validation (no grad)
         model.eval()
-        val_loss = closure(dts_test, model, criterion, device)
-        val_acc = accuracy(dts_test, model, device)
+        with torch.inference_mode():
+            val_loss = closure(dts_test, model, criterion, device)
+            val_acc = accuracy(dts_test, model, device)
+            train_accuracy = accuracy(dts_train, model, device)
+            real_train_loss = closure(dts_train, model, criterion, device)
+
         elapsed_time_4_epoch = time.time() - start_time
-        train_accuracy = accuracy(dts_train, model, device)
-        real_train_loss = closure(dts_train,model,criterion,device)
+
+        # Time bookkeeping
         history['time_4_epoch'].append(history['time_4_epoch'][-1] + elapsed_time_noVAL)
-        print(f'Time: {history["elapsed_time"][-1] + elapsed_time_noVAL}')
-        print(f'train_loss = {real_train_loss}   train_acc = {train_accuracy}')
-        print(f'val_loss = {val_loss}   val_acc = {val_acc}')
+        history['elapsed_time'].append(history['elapsed_time'][-1] + elapsed_time_4_epoch)
+
+        if epoch == 0 and opt == 'cmal':
+            history['time_4_epoch'][-1] += time_compute_fw0
+            history['elapsed_time'][-1] += time_compute_fw0
+
+        # Logging
+        print(f'Time: {history["elapsed_time"][-1]:.2f}s '
+              f'| train_loss={real_train_loss:.4f} train_acc={train_accuracy:.4f} '
+              f'| val_loss={val_loss:.4f} val_acc={val_acc:.4f}')
+
+        # History metrics
         history['train_loss'].append(real_train_loss)
         history['val_loss'].append(val_loss)
         history['train_acc'].append(train_accuracy)
         history['val_accuracy'].append(val_acc)
-        history['elapsed_time'].append(history['elapsed_time'][-1] + elapsed_time_4_epoch)
-        if epoch == 0 and opt == 'cmal':
-            history['time_4_epoch'][-1] += time_compute_fw0
-            history['elapsed_time'][-1] += time_compute_fw0
-        # Save data during training
-        if min_acc < val_acc and savemodel == True:
-            torch.save(model, sm_root + 'train_' + opt + '_' + net_name + '_' + ds + '_model_best'+str(seed)+'.pth')
-            min_acc = val_acc
-            print('\n - New best Val-ACC: {:.3f} at epoch {} - \n'.format(min_acc, ep + 1))
+        history['step_size'].append(optimizer.param_groups[0].get('zeta', None))
 
-        torch.save(history, sm_root + 'history_' + opt + '_' + net_name + '_' + ds + '_' + history_ID +'.txt')
+        # Optional save best
+        if savemodel and val_acc > max(history['val_accuracy'][:-1]):
+            torch.save(model, f'{sm_root}train_{opt}_{net_name}_{ds}_model_best{seed}.pth')
+            print(f'\n - New best Val-ACC: {val_acc:.3f} at epoch {epoch + 1} - \n')
+
+        # Save history each epoch
+        torch.save(history, f'{sm_root}history_{opt}_{net_name}_{ds}_{history_ID}.txt')
+
     print('\n - Finished Training - \n')
-    torch.save(history, sm_root + 'history_' + opt + '_' + net_name + '_' + ds + '_' + history_ID + '.txt')
+    torch.save(history, f'{sm_root}history_{opt}_{net_name}_{ds}_{history_ID}.txt')
     return history
 
-seed = 1
-torch.manual_seed(seed)
-transform = torchvision.transforms.Compose([torchvision.transforms.RandomHorizontalFlip(),
-                                            torchvision.transforms.RandomRotation(10),
-                                            torchvision.transforms.RandomAffine(0, shear=10, scale=(0.8, 1.2)),
-                                            torchvision.transforms.ColorJitter(brightness=0.2, contrast=0.2,
-                                                                               saturation=0.2),
-                                            torchvision.transforms.ToTensor(),
-                                            torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-trainset = torchvision.datasets.CIFAR10(root='\data', train=True, download=True, transform=transform)
-#trainset = Subset(trainset,range(1024))
-testset = torchvision.datasets.CIFAR10(root='\data', train=False, download=True, transform=transform)
-#testset = Subset(testset,range(256))
-num_classes = 10
-bs = 128
-#try:
-#    os.mkdir('prove_imclass_28apr')
-#except:
-#    os.chdir('prove_imclass_28apr')
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=bs, shuffle=False)  # Togliere random reshuffle --> shuffle=False
-testloader = torch.utils.data.DataLoader(testset, batch_size=bs, shuffle=False)
-tl = [(x,y) for x,y in trainloader]
-tstl = [(x,y) for x,y in testloader]
-for rete in ['resnet18']:#,'resnet34','resnet50','resnet101','resnet150']:
-    for algo in ['cma','cmal','adam','adagrad','adadelta']:
-        history = train_model(sm_root='',
-                          opt=algo,
-                          ep=1,
-                          ds='cifar10',
-                          net_name=rete,
-                          n_class=10,
-                          history_ID='seed_'+str(seed),
-                          dts_train=tl,
-                          dts_test=tstl,
-                          seed=seed,
-                          savemodel=False)
 
+if __name__ == '__main__':
+    seed = 1
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    # Transforms
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.RandomHorizontalFlip(),
+        torchvision.transforms.RandomRotation(10),
+        torchvision.transforms.RandomAffine(0, shear=10, scale=(0.8, 1.2)),
+        torchvision.transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
+    # Datasets
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+
+    # DataLoaders (faster host→GPU transfer and parallel loading)
+    pin_mem = torch.cuda.is_available()
+    num_workers = max(0, (torch.get_num_threads() // 2))
+    trainloader = DataLoader(
+        trainset,
+        batch_size=128,
+        shuffle=False,
+        pin_memory=pin_mem,
+        num_workers=num_workers,
+        persistent_workers=(num_workers > 0),
+    )
+    testloader = DataLoader(
+        testset,
+        batch_size=128,
+        shuffle=False,
+        pin_memory=pin_mem,
+        num_workers=num_workers,
+        persistent_workers=(num_workers > 0),
+    )
+
+
+    for rete in ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet150']:
+        for algo in ['cma', 'cmal', 'adam', 'adagrad', 'adadelta']:
+            try:
+                train_model(
+                    sm_root='',
+                    opt=algo,
+                    ep=50,
+                    ds='cifar10',
+                    net_name=rete,
+                    n_class=10,
+                    history_ID=f'seed_{seed}',
+                    dts_train=trainloader,
+                    dts_test=testloader,
+                    seed=seed,
+                    savemodel=False,
+                )
+            except Exception as e:
+                print(f'[SKIP] net={rete}, opt={algo} due to error: {e}')
