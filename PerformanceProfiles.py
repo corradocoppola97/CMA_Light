@@ -22,7 +22,7 @@ def find_fL(problem,seed,algos):
 
 def fw0(problem,seed):
     ds, net = problem
-    algo = 'cma'
+    algo = 'cmal'
     file = 'history_' + algo + '_' + net + '_' + ds + '_seed_' + str(seed) + '.txt'
     stats = torch.load(file,map_location=torch.device('cpu'))
     fw0 = stats['train_loss'][0]

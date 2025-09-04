@@ -1,5 +1,6 @@
 import torch
 import torchvision
+import copy
 
 
 def get_w(model: torch.nn.Module) -> torch.Tensor:
@@ -71,10 +72,10 @@ class CMA_L(torch.optim.Optimizer):
         verbose = self.defaults['verbose_EDFL']
 
 
-        sample_model = type(mod)()
+        sample_model = copy.deepcopy(mod)
         sample_model.load_state_dict(mod.state_dict())
 
-        real_loss = closure(dl_train, sample_model, criterion, device)
+        real_loss = closure(dl_train, device, sample_model, criterion)
         nfev += 1
         if verbose:
             print(f'Starting EDFL with zeta={zeta}, alpha={alpha}, f_tilde={f_tilde}, real_loss_before={real_loss}')
@@ -89,7 +90,7 @@ class CMA_L(torch.optim.Optimizer):
 
         w_prova = w_before + d_k * (alpha / delta)
         apply_w(sample_model, w_prova)
-        cur_loss = closure(dl_train, sample_model, criterion, device)
+        cur_loss = closure(dl_train, device, sample_model, criterion)
         nfev += 1
 
         idx, f_j = 0, f_tilde
@@ -99,7 +100,7 @@ class CMA_L(torch.optim.Optimizer):
             f_j, alpha = cur_loss, alpha / delta
             w_prova = w_before + d_k * (alpha / delta)
             apply_w(sample_model, w_prova)
-            cur_loss = closure(dl_train, sample_model, criterion, device)
+            cur_loss = closure(dl_train, device, sample_model, criterion)
             nfev, idx = nfev + 1, idx + 1
 
         return alpha, nfev, f_j

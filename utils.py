@@ -45,6 +45,7 @@ def accuracy(data_loader: torch.utils.data.DataLoader,
     accuracy = correct_predictions / total_samples
     return accuracy
 
+
 def get_w(model):
     return torch.cat([p.data.view(-1) for p in model.parameters()])
 
@@ -105,8 +106,6 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-
-
 def plot_graph(data, label, title, path):
     epochs = range(0, len(data))
     plt.plot(epochs, data, 'orange', label=label)
@@ -121,7 +120,7 @@ def plot_graph(data, label, title, path):
 
 def plot_history(history, path):
     plot_graph(history['train_loss'], 'Train Loss', 'Train_loss', path)
-    plot_graph(history['val_acc'], 'Val Acc.', 'Val_acc', path)
+    plot_graph(history['val_acccuracy'], 'Val Acc.', 'Val_acc', path)
 
 
 def extract_history(history_file):

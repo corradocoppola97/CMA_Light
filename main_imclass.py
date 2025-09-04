@@ -32,7 +32,7 @@ def train_model(
     # Hardware
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if device.type == 'cuda':
-        torch.backends.cudnn.benchmark = True  # fixed-size CIFAR inputs -> faster
+        torch.backends.cudnn.benchmark = True
         torch.cuda.empty_cache()
 
     # Model
@@ -46,12 +46,12 @@ def train_model(
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = set_optimizer(opt, model)
 
-    # Initial Setup / Baselines (no gradients needed)
+    # Baselines
     t1 = time.time()
     with torch.inference_mode():
         fw0 = closure(dts_train, model, criterion, device)
     t2 = time.time()
-    time_compute_fw0 = t2 - t1  # added to elapsed time only for CMAL
+    time_compute_fw0 = t2 - t1
     with torch.inference_mode():
         initial_val_loss = closure(dts_test, model, criterion, device)
         train_accuracy = accuracy(dts_train, model, device)
@@ -73,16 +73,16 @@ def train_model(
         'train_acc': [train_accuracy],
         'val_accuracy': [val_acc],
         'step_size': [],
-        'time_4_epoch': [0.0],  # cumulative time excluding validation
+        'time_4_epoch': [0.0],
         'nfev': 1,
         'accepted': [],
         'Exit': [],
         'comments': [],
-        'elapsed_time': [0.0],  # cumulative time including validation
+        'elapsed_time': [0.0],
         'f_tilde': [],
     }
 
-    # Train
+    # Training loop
     for epoch in range(ep):
         start_time = time.time()
         model.train()
@@ -91,7 +91,6 @@ def train_model(
         if opt in ('cmal', 'cma'):
             w_before = get_w(model)
 
-        # Training loop
         with tqdm(dts_train, unit='step', position=0, leave=True) as tepoch:
             tepoch.set_description(f"Epoch {epoch + 1}/{ep} - Training")
             for x, y in tepoch:
@@ -102,7 +101,6 @@ def train_model(
                 y_pred = model(x)
                 loss = criterion(y_pred, y)
 
-                # Original scaling preserved
                 f_tilde += loss.item() * (len(x) / 1024)
 
                 loss.backward()
@@ -112,7 +110,7 @@ def train_model(
 
         history['f_tilde'].append(f_tilde)
 
-        # Post-epoch control steps (unchanged logic)
+        # Control step
         if opt == 'cmal':
             optimizer.set_f_tilde(f_tilde)
             model, history, f_after, exit_flag = optimizer.control_step(
@@ -127,7 +125,7 @@ def train_model(
 
         elapsed_time_noVAL = time.time() - start_time
 
-        # Validation (no grad)
+        # Validation
         model.eval()
         with torch.inference_mode():
             val_loss = closure(dts_test, model, criterion, device)
@@ -157,12 +155,12 @@ def train_model(
         history['val_accuracy'].append(val_acc)
         history['step_size'].append(optimizer.param_groups[0].get('zeta', None))
 
-        # Optional save best
+        # Save best model
         if savemodel and val_acc > max(history['val_accuracy'][:-1]):
             torch.save(model, f'{sm_root}train_{opt}_{net_name}_{ds}_model_best{seed}.pth')
             print(f'\n - New best Val-ACC: {val_acc:.3f} at epoch {epoch + 1} - \n')
 
-        # Save history each epoch
+        # Save history
         torch.save(history, f'{sm_root}history_{opt}_{net_name}_{ds}_{history_ID}.txt')
 
     print('\n - Finished Training - \n')
@@ -186,41 +184,40 @@ if __name__ == '__main__':
         torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
-    # Datasets
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    # Choose dataset (switch here)
+    DATASET = "CIFAR100"
 
-    # DataLoaders (faster host→GPU transfer and parallel loading)
+    if DATASET == "CIFAR10":
+        trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+        n_class = 10
+    else:
+        trainset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform)
+        n_class = 100
+
+    # DataLoaders
     pin_mem = torch.cuda.is_available()
-    num_workers = max(0, (torch.get_num_threads() // 2))
+    num_workers = 2  # stable across OSes
     trainloader = DataLoader(
-        trainset,
-        batch_size=128,
-        shuffle=False,
-        pin_memory=pin_mem,
-        num_workers=num_workers,
-        persistent_workers=(num_workers > 0),
+        trainset, batch_size=64, shuffle=True,
+        pin_memory=pin_mem, num_workers=num_workers, persistent_workers=(num_workers > 0)
     )
     testloader = DataLoader(
-        testset,
-        batch_size=128,
-        shuffle=False,
-        pin_memory=pin_mem,
-        num_workers=num_workers,
-        persistent_workers=(num_workers > 0),
+        testset, batch_size=64, shuffle=False,
+        pin_memory=pin_mem, num_workers=num_workers, persistent_workers=(num_workers > 0)
     )
 
-
-    for rete in ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet150']:
-        for algo in ['cma', 'cmal', 'adam', 'adagrad', 'adadelta']:
+    for rete in ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']:
+        for algo in ['sgd', 'cmal', 'adam','adagrad','adadelta']:
             try:
                 train_model(
                     sm_root='',
                     opt=algo,
                     ep=50,
-                    ds='cifar10',
+                    ds=DATASET.lower(),
                     net_name=rete,
-                    n_class=10,
+                    n_class=n_class,
                     history_ID=f'seed_{seed}',
                     dts_train=trainloader,
                     dts_test=testloader,

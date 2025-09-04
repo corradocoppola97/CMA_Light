@@ -3,6 +3,7 @@ import torch.optim.lbfgs
 from fnn import FNN
 from Dataset import *
 from utils import  *
+from utils_cmalight import closure_reg
 import os, time
 from warnings import filterwarnings
 filterwarnings('ignore')
@@ -50,7 +51,7 @@ def train_model(ds: str,
     # Train
     start_time_4_epoch = time.time()
     if opt == 'cma' or opt == 'nmcma' or opt=='cmal':
-        fw0 = closure(dataset,device,model,criterion)
+        fw0 = closure_reg(dataset,device,model,criterion)
         optimizer.set_fw0(fw0)
         history['nfev'] +=1
         f_before = fw0
@@ -62,11 +63,11 @@ def train_model(ds: str,
             else:
                 optimizer.set_f_before(f_before=f_before)
     else:
-        f_before = closure(dataset,device,model,criterion)
+        f_before = closure_reg(dataset,device,model,criterion)
         history['nfev'] += 1
     if opt == 'sgd':
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=1,gamma=0.95)
-    test_loss = closure(dataset,device,model,criterion,test=True)
+    test_loss = closure_reg(dataset,device,model,criterion,test=True)
     history['train_loss'].append(f_before)
     history['val_loss'].append(test_loss)
     history['time_4_epoch'].append(0.0)
@@ -101,7 +102,7 @@ def train_model(ds: str,
             #if verbose_train: print(f'Batch {j+1}/{n_iterations}   Running Loss: {loss.item():.6f}')
 
             if opt=='lbfgs':
-                optimizer.step(closure,dataset=dataset,device=device,mod=model,loss_fun=criterion)
+                optimizer.step(closure_reg,dataset=dataset,device=device,mod=model,loss_fun=criterion)
             else:
                 optimizer.step()
             if opt == 'sgd':
@@ -109,7 +110,7 @@ def train_model(ds: str,
 
         # CMA support functions
         if opt == 'cma':
-            model, history, f_before, f_after, exit_type = optimizer.control_step(model,w_before,closure,
+            model, history, f_before, f_after, exit_type = optimizer.control_step(model,w_before,closure_reg,
                                                     dataset,device,criterion,history,epoch)
             optimizer.set_reference(f_before=f_after)
 
@@ -121,7 +122,7 @@ def train_model(ds: str,
 
         #NMCMA support functions
         elif opt=='nmcma':
-            model, history, f_before, f_after, exit_type = optimizer.control_step(model, w_before, closure,
+            model, history, f_before, f_after, exit_type = optimizer.control_step(model, w_before, closure_reg,
                                                                                   dataset, device, criterion, history,
                                                                                   epoch)
             optimizer.set_f_before(f_before=f_after)
@@ -137,7 +138,7 @@ def train_model(ds: str,
             optimizer.set_f_tilde(f_tilde)
             phi = optimizer.phi
             #print(f' f_tilde = {f_tilde}   ')
-            model, history, f_after, exit = optimizer.control_step(model, w_before, closure,
+            model, history, f_after, exit = optimizer.control_step(model, w_before, closure_reg,
                                                                    dataset, device, criterion, history, epoch)
             optimizer.set_phi(min(f_tilde, f_after, phi))
             elapsed_time_4_epoch = time.time() - start_time_4_epoch
@@ -149,12 +150,12 @@ def train_model(ds: str,
 
         else: # Compute the training loss after if you are not using CMA/NMCMA
             elapsed_time_4_epoch = time.time() - start_time_4_epoch
-            f_after = closure(dataset,device,model,criterion) #The cpu time for this operation is excluded because you don't need it
+            f_after = closure_reg(dataset,device,model,criterion) #The cpu time for this operation is excluded because you don't need it
 
 
 
         # Test
-        test_loss = closure(dataset,device,model,criterion,test = True)
+        test_loss = closure_reg(dataset,device,model,criterion,test = True)
 
         # Update history
         try:
@@ -193,14 +194,24 @@ if __name__ == "__main__":
     dataset_list = [ds[:-4] for ds in os.listdir('dataset')]
     #algorithms = ['lbfgs','ig','cma','nmcma']
     architectures = ['S','XXL','XXXL','4XL','M','L','XL']
-    seeds = [1,10,100,1000,10000]
+    seeds = [1]#,10,100,1000,10000]
     all_probs = [(ds,net) for ds in dataset_list for net in architectures]
     #all_probs = [('Mv','S')]
     smroot = 'prove_CMAL/'
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('device == ',device)
 
-    print('---------------- SGD -----------------')
+    print('---------------- CMA Light -----------------')
+    for idx, problem in enumerate(all_probs):
+        print(f'Solving Problem {idx + 1}/{len(all_probs)} --- Dataset: {problem[0]}   Network: {problem[1]}')
+        for j, seed in enumerate(seeds):
+            print(f'Run {j + 1}/{len(seeds)}')
+            history = train_model(ds=problem[0], arch=problem[1], sm_root=smroot, opt='cmal', ep=250, time_limit=300,
+                                  max_it_EDFL=100, ID_history='seed_' + str(seed), zeta=5e-2,theta=0.75,
+                                  delta=0.9, gamma=1e-6, verbose=False, tau=1e-2, batch_size=128, verbose_EDFL=False,
+                                  verbose_train=False, seed=seed, device=device)
+
+"""    print('---------------- SGD -----------------')
     for idx, problem in enumerate(all_probs):
         print(f'Solving Problem {idx + 1}/{len(all_probs)} --- Dataset: {problem[0]}   Network: {problem[1]}')
         for j, seed in enumerate(seeds):
@@ -236,17 +247,9 @@ if __name__ == "__main__":
             history = train_model(ds=problem[0], arch=problem[1], sm_root=smroot,
                                   opt='adagrad', ep=250, time_limit=300,
                                   ID_history='seed_' + str(seed), batch_size=128,
-                                  verbose_train=False, seed=seed, device=device)
+                                  verbose_train=False, seed=seed, device=device)"""
 
-    print('---------------- CMA Light -----------------')
-    for idx, problem in enumerate(all_probs):
-        print(f'Solving Problem {idx + 1}/{len(all_probs)} --- Dataset: {problem[0]}   Network: {problem[1]}')
-        for j, seed in enumerate(seeds):
-            print(f'Run {j + 1}/{len(seeds)}')
-            history = train_model(ds=problem[0], arch=problem[1], sm_root=smroot, opt='cmal', ep=250, time_limit=300,
-                                  max_it_EDFL=100, ID_history='seed_' + str(seed), zeta=5e-2,theta=0.75,
-                                  delta=0.9, gamma=1e-6, verbose=False, tau=1e-2, batch_size=128, verbose_EDFL=False,
-                                  verbose_train=False, seed=seed, device=device)
+
 
 
 
