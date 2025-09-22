@@ -80,7 +80,7 @@ class CMA_L(torch.optim.Optimizer):
         if verbose:
             print(f'Starting EDFL with zeta={zeta}, alpha={alpha}, f_tilde={f_tilde}, real_loss_before={real_loss}')
 
-        if f_tilde > max(real_loss - gamma * alpha * torch.norm(d_k) ** 2, self.fw0):
+        if f_tilde > min(real_loss, self.fw0):
             if verbose: print('fail: ALPHA = 0')
             return 0, nfev, f_tilde
 
