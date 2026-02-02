@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from utils import closure, count_parameters, set_optimizer, accuracy
-from cmalight import get_w
+from coff_ig import get_w
 from network import get_pretrained_net
 
 filterwarnings('ignore')

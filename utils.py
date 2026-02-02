@@ -6,7 +6,7 @@ import csv
 import ast
 import torchvision
 from typing import Union
-from cmalight import CMA_L
+from coff_ig import Coff_Ig
 from cma import CMA
 import torch.nn as nn
 
@@ -82,7 +82,7 @@ def set_optimizer(opt:str, model: torchvision.models, *args, **kwargs):
     elif opt == 'sgd':
         optimizer = torch.optim.SGD(model.parameters(),*args,**kwargs)
     elif opt == 'cmal':
-        optimizer = CMA_L(model.parameters(),verbose=True,verbose_EDFL=True)
+        optimizer = Coff_Ig(model.parameters(),verbose=True,verbose_EDFL=True)
     elif opt == 'cma':
         optimizer = CMA(model.parameters(),verbose=True,verbose_EDFL=True)
     else:
@@ -175,6 +175,8 @@ def set_architecture(arch:str, input_dim:int, seed: int):
 
     elif arch == '4XL':
         return nn.Sequential(nn.Linear(input_dim, 50), nn.Sigmoid(), nn.Linear(50, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
+                             nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
                              nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
                              nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
                              nn.Sigmoid(), nn.Linear(500, 500), nn.Sigmoid(), nn.Linear(500, 500),
