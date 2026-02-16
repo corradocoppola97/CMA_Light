@@ -14,7 +14,9 @@ class Dataset:
     def __init__(self,
                  csvFile: str,
                  scaling: bool = False,
-                 perc_test: float = 0.25):
+                 perc_test: float = 0.25,
+                 frac: float = 1.0
+                 ):
         """
         :param csvFile: path to the dataset to read
         :param scaling: if True/1 data are scaled
@@ -23,7 +25,7 @@ class Dataset:
 
         self.dataset = pd.read_csv(csvFile)
         self.csv = csvFile.split('/')[-1]
-        self.dataset = self.dataset.sample(frac=1, random_state=0)  # così ho fatto anche reshuffling
+        self.dataset = self.dataset.sample(frac=frac, random_state=0)  # così ho fatto anche reshuffling
 
         if scaling == 1:
             scaler = MinMaxScaler()
@@ -35,7 +37,7 @@ class Dataset:
         self.x = self.dataset[:, :-1]
         self.y = self.dataset[:, -1]
 
-        self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.x, self.y, test_size=perc_test, random_state=1994)
+        self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.x, self.y, test_size=perc_test, random_state=0)
         self.P = self.x_train.shape[0]
         self.P_test = self.x_test.shape[0]
         self.n = self.x_train.shape[1]
@@ -73,14 +75,14 @@ class Dataset:
         self.y_train = self.y_train[idx]
 
 
-def create_dataset(dataset: str):
+def create_dataset(dataset: str, frac: float = 1.0):
     if dataset not in {'cifar10', 'cifar100'}:
         path = os.getcwd() +'/dataset/' + dataset+'.csv'
         csv_file_path = path
     else:
         csv_file_path = dataset
     try:
-        dataset = Dataset(csv_file_path, scaling=True)
+        dataset = Dataset(csv_file_path, scaling=True, frac=frac)
     except FileNotFoundError as e:
         print("data were not detected correctly. Check your cwd and the location of your dataset folder")
         print(f"cwd: {os.getcwd()}")

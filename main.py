@@ -23,6 +23,7 @@ def train_model(ds: str,
                 shuffle = False,
                 device = 'cpu',
                 criterion = torch.nn.functional.mse_loss,
+                frac: float = 1.0,
                 *args,
                 **kwargs):
 
@@ -36,7 +37,7 @@ def train_model(ds: str,
     # Setups
     history = {'train_loss': [], 'val_loss': [], 'time_4_epoch': [], 'step_size': [],
                'accepted': [], 'nfev': 0, 'Exit':[]}
-    dataset = create_dataset(ds)
+    dataset = create_dataset(ds, frac=frac)
     input_dim = dataset.n
     layers = set_architecture(arch,input_dim,seed)
     model = FNN(layers=layers).to(device)
@@ -211,7 +212,7 @@ if __name__ == "__main__":
                                   delta=0.9, gamma=1e-6, verbose=False, tau=1e-2, batch_size=128, verbose_EDFL=False,
                                   verbose_train=False, seed=seed, device=device)
 
-"""    print('---------------- SGD -----------------')
+    print('---------------- SGD -----------------')
     for idx, problem in enumerate(all_probs):
         print(f'Solving Problem {idx + 1}/{len(all_probs)} --- Dataset: {problem[0]}   Network: {problem[1]}')
         for j, seed in enumerate(seeds):
@@ -247,7 +248,7 @@ if __name__ == "__main__":
             history = train_model(ds=problem[0], arch=problem[1], sm_root=smroot,
                                   opt='adagrad', ep=250, time_limit=300,
                                   ID_history='seed_' + str(seed), batch_size=128,
-                                  verbose_train=False, seed=seed, device=device)"""
+                                  verbose_train=False, seed=seed, device=device)
 
 
 
