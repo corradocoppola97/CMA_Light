@@ -26,6 +26,7 @@ def train_model(
     dts_test,
     modelpth=None,
     savemodel: bool = False,
+    batch_size: int = 128,
 ) -> dict:
     print('\n ------- Begin training process ------- \n')
 
@@ -101,7 +102,7 @@ def train_model(
                 y_pred = model(x)
                 loss = criterion(y_pred, y)
 
-                f_tilde += loss.item() * (len(x) / 1024)
+                f_tilde += loss.item() * (len(x) / batch_size)
 
                 loss.backward()
                 optimizer.step()
@@ -199,30 +200,40 @@ if __name__ == '__main__':
     # DataLoaders
     pin_mem = torch.cuda.is_available()
     num_workers = 2  # stable across OSes
-    trainloader = DataLoader(
-        trainset, batch_size=64, shuffle=True,
+    batch_size = 128
+    n_epochs = 100
+    # create both shuffled and non-shuffled train loaders; select per-algorithm below
+    trainloader_shuffle = DataLoader(
+        trainset, batch_size=batch_size, shuffle=True,
+        pin_memory=pin_mem, num_workers=num_workers, persistent_workers=(num_workers > 0)
+    )
+    trainloader_noshuffle = DataLoader(
+        trainset, batch_size=batch_size, shuffle=False,
         pin_memory=pin_mem, num_workers=num_workers, persistent_workers=(num_workers > 0)
     )
     testloader = DataLoader(
-        testset, batch_size=64, shuffle=False,
+        testset, batch_size=batch_size, shuffle=False,
         pin_memory=pin_mem, num_workers=num_workers, persistent_workers=(num_workers > 0)
     )
 
     for rete in ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']:
         for algo in ['sgd', 'cmal', 'adam','adagrad','adadelta']:
             try:
+                # select non-shuffled trainloader for 'cmal', otherwise use shuffled
+                dts = trainloader_noshuffle if algo == 'cmal' else trainloader_shuffle
                 train_model(
                     sm_root='',
                     opt=algo,
-                    ep=50,
+                    ep=n_epochs,
                     ds=DATASET.lower(),
                     net_name=rete,
                     n_class=n_class,
                     history_ID=f'seed_{seed}',
-                    dts_train=trainloader,
+                    dts_train=dts,
                     dts_test=testloader,
                     seed=seed,
                     savemodel=False,
+                    batch_size=batch_size
                 )
             except Exception as e:
                 print(f'[SKIP] net={rete}, opt={algo} due to error: {e}')
