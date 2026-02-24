@@ -19,7 +19,7 @@ def closure(data_loader,
             device):
     loss = 0
     with torch.no_grad():
-        K = 1024
+        K = len(data_loader.dataset)
         for x,y in data_loader:
             x,y = x.to(device), y.to(device)
             y_pred = model(x)

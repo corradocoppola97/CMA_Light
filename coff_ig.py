@@ -142,7 +142,7 @@ class Coff_Ig(torch.optim.Optimizer):
                     history['Exit'].append('10a')
                 else:
                     alpha, f_after = 0, phi
-                    history['Exit'].append('9b')
+                    history['Exit'].append('10b')
 
             else:  # try EDFL
                 if verbose: print('Executing EDFL')
@@ -167,7 +167,7 @@ class Coff_Ig(torch.optim.Optimizer):
                 else:  # total success
                     f_after = f_after_LS
                     self.set_zeta(alpha)
-                    history['Exit'].append('16')
+                    history['Exit'].append('17')
 
             if verbose: print(f'Final alpha={alpha}, Current step-size zeta={zeta}')
             if alpha > 0:  # update model

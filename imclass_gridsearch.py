@@ -170,8 +170,8 @@ def main():
         'weight_decay': [0.0, 1e-4],
     }
 
-    k_folds = 5
-    epochs = 10
+    k_folds = 4
+    epochs = 50
     batch_size = 128
 
     print('Starting grid search for Adam...')

@@ -1,6 +1,4 @@
 import torch
-from tqdm import tqdm
-
 
 
 def closure_reg(dataset,
@@ -18,21 +16,18 @@ def closure_reg(dataset,
     loss = 0.0
 
     with torch.no_grad():
-        with tqdm(range(0, P, batch_size), unit="step", position=0, leave=False) as tepoch:
-            for i in tepoch:
-                tepoch.set_description("Validation" if test else "Training")
+        for i in range(0, P, batch_size):
+            # use minibatch method to extract slice
+            dataset.minibatch(i, i + batch_size, test=test)
+            if test:
+                x = dataset.x_test_mb.to(device)
+                y = dataset.y_test_mb.to(device)
+            else:
+                x = dataset.x_train_mb.to(device)
+                y = dataset.y_train_mb.to(device)
 
-                # use minibatch method to extract slice
-                dataset.minibatch(i, i + batch_size, test=test)
-                if test:
-                    x = dataset.x_test_mb.to(device)
-                    y = dataset.y_test_mb.to(device)
-                else:
-                    x = dataset.x_train_mb.to(device)
-                    y = dataset.y_train_mb.to(device)
-
-                batch_loss = loss_fun(mod(x), y.long()).item()
-                loss += (len(x) / P) * batch_loss
+            batch_loss = loss_fun(mod(x), y.long()).item()
+            loss += (len(x) / P) * batch_loss
 
     return loss
 
